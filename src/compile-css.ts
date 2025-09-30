@@ -4,11 +4,11 @@ import extractImports from "./extract-imports.js";
 
 /**
  * Same as loadStylesheet function from `@tailwindcss/browser`,
- * but with instrumentation removed.
+ * but with instrumentation removed and added support for fetching remote
+ * stylesheets.
  *
  * @see https://github.com/tailwindlabs/tailwindcss/blob/v4.1.13/packages/%40tailwindcss-browser/src/index.ts#L109
  */
-// eslint-disable-next-line @typescript-eslint/require-await
 async function loadStylesheet(id: string, base: string) {
   if (id === "tailwindcss") {
     return {
@@ -49,6 +49,16 @@ async function loadStylesheet(id: string, base: string) {
       base,
       content: assets.css.utilities,
     };
+  }
+  if (id.startsWith("https://") || id.startsWith("http://")) {
+    const response = await fetch(id);
+    if (!response.ok) {
+      throw new Error(
+        `Failed to load stylesheet from "${id}": ${response.status.toString()} ${response.statusText}`,
+      );
+    }
+    const content = await response.text();
+    return { path: id, base, content };
   }
 
   throw new Error(`The browser build does not support @import for "${id}"`);
@@ -91,6 +101,17 @@ function prepareTailwindConfiguration(
   // Import at-rules need to be at the top of the CSS.
   const { cssWithoutImports: configurationCssWithoutImports, importRules } =
     extractImports(configurationCss);
+
+  // If the configuration CSS contains `@reference` assume tailwind
+  // configuration is provided in referenced stylesheet or included manually
+  // and skip adding default tailwind configuration.
+  if (configurationCssWithoutImports.includes("@reference")) {
+    return `
+      ${importRules}
+      ${configurationCssWithoutImports}
+      `;
+  }
+
   // Since preflight can be disabled, we need to import each layer explicitly,
   // instead of just `@import "tailwindcss"`.
   return `
